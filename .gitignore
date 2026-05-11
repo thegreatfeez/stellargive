@@ -1,0 +1,21 @@
+# Node
+node_modules/
+.npm
+dist/
+.next/
+out/
+build/
+.env
+*.log
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Soroban
+.soroban/

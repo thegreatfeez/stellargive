@@ -1,0 +1,16 @@
+name: Contract CI
+
+on:
+  push:
+    paths:
+      - 'contracts/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update stable
+      - name: Run tests
+        run: cd contracts/stellar-give && cargo test
