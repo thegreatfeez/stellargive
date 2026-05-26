@@ -25,10 +25,66 @@ This document outlines the security mitigations, threat models, assumptions, and
 
 ## 4. Workflow & Maintenance Notes
 
-* **Branching**: All security updates, checklist revisions, and mitigation document adjustments must be proposed on a dedicated branch using:
-  ```bash
-  git checkout -b docs/security-audit-checklist
-  ```
-* **README Integration**: Ensure this file is explicitly linked under the `Security` section of the main project [README.md](file:///home/jhay/Desktop/stellargive/README.md#L89).
-* **Update Policy**: This document must be revised and updated after every external security audit cycle or any major architectural modification to the smart contract.
-* **Validation Protocol**: Use this checklist to audit and vet all incoming feature PRs. Merges must be blocked if any proposed state-changing actions or modifications lack corresponding, documented mitigations.
+Run before every release:
+
+1. Contract authorization paths reviewed (`require_auth` coverage complete).
+2. All mutable entry points tested against reentrancy and replay conditions.
+3. Deadline logic tested for edge timestamps and overflow assumptions.
+4. Token transfer validation tested for wrong token, insufficient amount, and failed transfer.
+5. Events emitted for all critical state transitions (create/donate/claim).
+6. CI green on `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`.
+7. Frontend build/lint clean; no hardcoded secrets in source.
+8. `.env` and deployment scripts reviewed for accidental secret exposure.
+9. Dependencies reviewed (`cargo audit` / `npm audit` in manual security review cadence).
+10. Deployment runbook completed on testnet before mainnet promotion.
+
+## 3. Dependency Audit Schedule
+
+Supply-chain attacks target dependencies. We audit on two tracks:
+
+| Track | Trigger | Tool |
+|-------|---------|------|
+| Automated CI | Every push / PR to `main` | `cargo audit --deny warnings` + `npm audit --audit-level=high` |
+| Scheduled monthly | 1st of each month at 06:00 UTC (GitHub Actions cron) | Same tools |
+| Pre-release manual | Before every production deployment | Human review of `cargo audit` + `npm audit` output |
+
+**Remediation policy:**
+- **Critical / High** — must be fixed or dependency removed before merge.
+- **Moderate** — fix within the next sprint; create a tracking issue immediately.
+- **Low** — address opportunistically; document in the issue tracker.
+
+To run audits locally:
+```bash
+# Rust
+cd contracts/stellar-give
+cargo install cargo-audit --locked
+cargo audit
+
+# Frontend
+cd frontend
+npm audit --audit-level=high
+```
+
+## 4. Responsible Disclosure
+
+If you discover a vulnerability:
+
+1. Do **not** open a public GitHub issue with exploit details.
+2. Email maintainers at `security@stellargive.org` with:
+   - Impact summary
+   - Reproduction steps
+   - Affected versions/commit SHA
+   - Suggested mitigation (if available)
+3. Expect acknowledgement within 72 hours.
+4. Coordinated disclosure occurs after mitigation is merged and deployed.
+
+## 4. Bug Bounty Guidelines (Community Program)
+
+- **In scope:** Soroban contract logic, auth model, claim/donation flows, CI/deploy chain issues causing fund risk.
+- **Out of scope:** Social engineering, third-party wallet bugs, spam, purely informational docs typos.
+- **Severity examples:**
+  - Critical: fund theft, unauthorized claim, permanent fund lock
+  - High: auth bypass without immediate theft
+  - Medium: deadline/token validation bypass requiring user interaction
+  - Low: non-sensitive data exposure, minor hardening issues
+- Rewards and eligibility are defined by maintainers per report quality, impact, and originality.
