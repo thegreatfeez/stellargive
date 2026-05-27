@@ -479,9 +479,12 @@ impl StellarGiveContract {
             };
 
             write_campaign(&env, &campaign);
-            
+
             let event_donor = if is_anonymous {
-                Address::from_string(&String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"))
+                Address::from_string(&String::from_str(
+                    &env,
+                    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+                ))
             } else {
                 donor.clone()
             };
@@ -838,7 +841,10 @@ mod tests {
             &None,
             &None,
         );
-        assert!(result.is_err(), "non-token contract address must be rejected");
+        assert!(
+            result.is_err(),
+            "non-token contract address must be rejected"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1030,10 +1036,7 @@ mod tests {
         assert_eq!(claimed, 20_000_000);
         assert_eq!(b2_after - b2_before, 9_900_000);
         assert_eq!(b1_after - b1_before, 9_900_000);
-        assert_eq!(
-            (b1_after - b1_before) + (b2_after - b2_before),
-            19_800_000
-        );
+        assert_eq!((b1_after - b1_before) + (b2_after - b2_before), 19_800_000);
         assert_eq!(
             client.get_campaign(&campaign_id).status,
             CampaignStatus::Claimed
@@ -1494,11 +1497,17 @@ mod tests {
             })
             .expect("Donation event was not emitted");
 
-        let payload: (u64, Address, i128, i128, Address) = 
+        let payload: (u64, Address, i128, i128, Address) =
             TryFromVal::try_from_val(&env, &event.2).expect("failed to decode event payload");
 
         assert_eq!(payload.0, campaign_id);
-        assert_eq!(payload.1, Address::from_string(&String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF")));
+        assert_eq!(
+            payload.1,
+            Address::from_string(&String::from_str(
+                &env,
+                "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+            ))
+        );
         assert_eq!(payload.2, 1_000_000);
         assert_eq!(payload.3, 1_000_000);
         assert_eq!(payload.4, token_client.address);
@@ -1506,7 +1515,13 @@ mod tests {
         // Top donors should also show the masked zero address instead of real donor.
         let top = client.get_top_donors(&campaign_id);
         assert_eq!(top.len(), 1);
-        assert_eq!(top.get(0).unwrap().0, Address::from_string(&String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF")));
+        assert_eq!(
+            top.get(0).unwrap().0,
+            Address::from_string(&String::from_str(
+                &env,
+                "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+            ))
+        );
     }
 
     #[test]
@@ -1543,7 +1558,7 @@ mod tests {
             })
             .expect("Donation event was not emitted");
 
-        let payload: (u64, Address, i128, i128, Address) = 
+        let payload: (u64, Address, i128, i128, Address) =
             TryFromVal::try_from_val(&env, &event.2).expect("failed to decode event payload");
 
         assert_eq!(payload.0, campaign_id);
@@ -1576,7 +1591,10 @@ mod tests {
             &Some(String::from_str(&env, "https://mywebsite.com")),
             &Some(String::from_str(&env, "https://twitter.com/myhandle")),
         );
-        assert!(result_ok.is_ok(), "valid https social links must be accepted");
+        assert!(
+            result_ok.is_ok(),
+            "valid https social links must be accepted"
+        );
 
         // Invalid website link (non-https) is rejected
         let result_err_web = client.try_create_campaign(
@@ -1591,7 +1609,10 @@ mod tests {
             &Some(String::from_str(&env, "http://mywebsite.com")),
             &None,
         );
-        assert!(result_err_web.is_err(), "non-https website must be rejected");
+        assert!(
+            result_err_web.is_err(),
+            "non-https website must be rejected"
+        );
 
         // Invalid twitter link (non-https) is rejected
         let result_err_tw = client.try_create_campaign(
