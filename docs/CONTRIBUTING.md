@@ -24,6 +24,8 @@ cd stellargive
 cp .env.example .env
 ```
 
+See `examples/` for CLI interaction patterns and Soroban integration examples.
+
 Contract tooling:
 ```bash
 rustup toolchain install stable
