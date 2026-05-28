@@ -28,6 +28,15 @@ export default function ExplorePage() {
     return () => window.clearTimeout(timeout);
   }, [searchTerm]);
 
+  useEffect(() => {
+    const status = searchParams.get("status");
+    if (status === "all" || status === "active" || status === "funded") {
+      setStatusFilter(status);
+      return;
+    }
+    setStatusFilter("active");
+  }, [searchParams]);
+
   const filtered = useMemo(() => {
     const byStatus = campaigns.filter((campaign) => {
       if (statusFilter === "all") return true;
