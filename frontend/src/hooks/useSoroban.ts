@@ -37,6 +37,7 @@ export function useCreateCampaign() {
     mutationFn: async (params: {
       beneficiary: string;
       title: string;
+      metadataUri?: string;
       targetAmount: string;
       deadline: number;
       acceptedToken: string;
@@ -49,6 +50,7 @@ export function useCreateCampaign() {
         new Address(address).toScVal(),
         new Address(params.beneficiary).toScVal(),
         nativeToScVal(params.title, { type: "string" }),
+        nativeToScVal(params.metadataUri || "https://example.com", { type: "string" }),
         nativeToScVal(toStroops(params.targetAmount), { type: "i128" }),
         nativeToScVal(BigInt(params.deadline), { type: "u64" }),
         new Address(params.acceptedToken).toScVal(),

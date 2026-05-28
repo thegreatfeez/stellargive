@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Navbar } from "@/components/Navbar";
 import { CampaignCard } from "@/components/CampaignCard";
 import { Button } from "@/components/ui/button";
@@ -11,9 +12,12 @@ import { Loader2, Search, Compass } from "lucide-react";
 const PAGE_SIZE = 9;
 
 export default function ExplorePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "funded">("active");
 
   const { data, isLoading, isFetching } = useCampaignsPaged(limit);
   const campaigns = data?.campaigns ?? [];
@@ -24,15 +28,52 @@ export default function ExplorePage() {
     return () => window.clearTimeout(timeout);
   }, [searchTerm]);
 
+  useEffect(() => {
+    const status = searchParams.get("status");
+    if (status === "all" || status === "active" || status === "funded") {
+      setStatusFilter(status);
+      return;
+    }
+    setStatusFilter("active");
+  }, [searchParams]);
+
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("status", statusFilter);
+    const query = next.toString();
+    router.replace(query ? `/explore?${query}` : "/explore", { scroll: false });
+  }, [router, searchParams, statusFilter]);
+
   const filtered = useMemo(() => {
+    const byStatus = campaigns.filter((campaign) => {
+      if (statusFilter === "all") return true;
+      if (statusFilter === "active") {
+        return campaign.status === "Active" && campaign.raised_amount < campaign.target_amount;
+      }
+      return campaign.raised_amount >= campaign.target_amount || campaign.status === "Funded";
+    });
+
     const term = debouncedSearch.trim().toLowerCase();
-    if (!term) return campaigns;
-    return campaigns.filter(
+    if (!term) return byStatus;
+    return byStatus.filter(
       (c) =>
         c.title.toLowerCase().includes(term) ||
         c.creator.toLowerCase().includes(term)
     );
-  }, [campaigns, debouncedSearch]);
+  }, [campaigns, debouncedSearch, statusFilter]);
+
+  const emptyMessage = useMemo(() => {
+    if (debouncedSearch) {
+      return "No campaigns match your search.";
+    }
+    if (statusFilter === "funded") {
+      return "No funded campaigns yet.";
+    }
+    if (statusFilter === "active") {
+      return "No active campaigns right now.";
+    }
+    return "No campaigns found. Be the first to create one!";
+  }, [debouncedSearch, statusFilter]);
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -68,6 +109,33 @@ export default function ExplorePage() {
           />
         </div>
 
+        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Campaign status filters">
+          <Button
+            variant={statusFilter === "all" ? "default" : "outline"}
+            onClick={() => setStatusFilter("all")}
+            role="tab"
+            aria-selected={statusFilter === "all"}
+          >
+            All
+          </Button>
+          <Button
+            variant={statusFilter === "active" ? "default" : "outline"}
+            onClick={() => setStatusFilter("active")}
+            role="tab"
+            aria-selected={statusFilter === "active"}
+          >
+            Active
+          </Button>
+          <Button
+            variant={statusFilter === "funded" ? "default" : "outline"}
+            onClick={() => setStatusFilter("funded")}
+            role="tab"
+            aria-selected={statusFilter === "funded"}
+          >
+            Funded
+          </Button>
+        </div>
+
         {isLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {Array.from({ length: PAGE_SIZE }).map((_, i) => (
@@ -75,11 +143,7 @@ export default function ExplorePage() {
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="text-center py-20 text-muted-foreground">
-            {debouncedSearch
-              ? "No campaigns match your search."
-              : "No campaigns found. Be the first to create one!"}
-          </div>
+          <div className="text-center py-20 text-muted-foreground">{emptyMessage}</div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filtered.map((campaign) => (

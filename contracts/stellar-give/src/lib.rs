@@ -43,6 +43,13 @@ pub struct Campaign {
     pub twitter: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct Update {
+    pub content: String,
+    pub timestamp: u64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[contracterror]
 #[repr(u32)]
@@ -132,6 +139,27 @@ fn calculate_platform_fee(amount: i128) -> Result<i128, ContractError> {
 
 fn campaign_key(id: u64) -> (Symbol, u64) {
     (symbol_short!("CMP"), id)
+}
+
+fn update_key(campaign_id: u64, update_num: u32) -> (Symbol, u64, u32) {
+    (symbol_short!("UPD"), campaign_id, update_num)
+}
+
+fn update_count_key(campaign_id: u64) -> (Symbol, u64) {
+    (symbol_short!("UPD_C"), campaign_id)
+}
+
+fn read_update_count(env: &Env, campaign_id: u64) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&update_count_key(campaign_id))
+        .unwrap_or(0)
+}
+
+fn write_update_count(env: &Env, campaign_id: u64, count: u32) {
+    env.storage()
+        .persistent()
+        .set(&update_count_key(campaign_id), &count);
 }
 
 fn read_next_id(env: &Env) -> u64 {
@@ -301,7 +329,7 @@ fn sync_status(env: &Env, campaign: &mut Campaign) {
 /// malicious token contracts.
 fn validate_url(url: &String) -> Result<(), ContractError> {
     let len = url.len() as usize;
-    if len < 8 || len > 200 {
+    if !(8..=200).contains(&len) {
         return Err(ContractError::InvalidUrl);
     }
     let mut buf = [0u8; 200];
@@ -350,6 +378,7 @@ impl StellarGiveContract {
     ///
     /// # Errors
     /// * `InvalidToken` if `accepted_token` does not implement `decimals()` and `symbol()`.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_campaign(
         env: Env,
         creator: Address,
@@ -674,6 +703,46 @@ impl StellarGiveContract {
         read_campaign(&env, campaign_id)?;
         Ok(read_top_donors(&env, campaign_id))
     }
+
+    /// Adds an update to a campaign. Maximum 10 updates allowed.
+    pub fn add_update(env: Env, id: u64, content: String) -> Result<(), ContractError> {
+        let campaign = read_campaign(&env, id)?;
+        campaign.creator.require_auth();
+
+        if content.is_empty() {
+            return Err(ContractError::InvalidUpdateContent);
+        }
+
+        let count = read_update_count(&env, id);
+        if count >= 10 {
+            return Err(ContractError::TooManyUpdates);
+        }
+
+        let update = Update {
+            content,
+            timestamp: env.ledger().timestamp(),
+        };
+
+        env.storage()
+            .persistent()
+            .set(&update_key(id, count), &update);
+
+        write_update_count(&env, id, count + 1);
+
+        Ok(())
+    }
+
+    /// Retrieves all updates for a campaign in chronological order.
+    pub fn get_updates(env: Env, id: u64) -> Vec<Update> {
+        let count = read_update_count(&env, id);
+        let mut updates = Vec::new(&env);
+        for i in 0..count {
+            if let Some(update) = env.storage().persistent().get(&update_key(id, i)) {
+                updates.push_back(update);
+            }
+        }
+        updates
+    }
 }
 
 #[cfg(test)]
@@ -873,6 +942,8 @@ mod tests {
             &2_000,
             &token_client.address,
             &None,
+            &None,
+            &None,
         );
         assert!(result.is_ok(), "valid SAC token must be accepted");
     }
@@ -893,6 +964,8 @@ mod tests {
             &10_000_000,
             &2_000,
             &not_a_token,
+            &None,
+            &None,
             &None,
         );
         assert!(
@@ -1237,6 +1310,8 @@ mod tests {
                 &2_000,
                 &token_client.address,
                 &None,
+                &None,
+                &None,
             );
             assert_eq!(id, expected_id);
         }
@@ -1364,6 +1439,8 @@ mod tests {
             &20_000,
             &token_client.address,
             &None,
+            &None,
+            &None,
         );
         client.donate(&donor, &campaign_id, &gross, &false);
 
@@ -1452,6 +1529,8 @@ mod tests {
             &2_000,
             &token_client.address,
             &None,
+            &None,
+            &None,
         );
         assert_eq!(result, Err(Ok(ContractError::TargetTooLow)));
     }
@@ -1473,6 +1552,8 @@ mod tests {
             &2_000,
             &token_client.address,
             &None,
+            &None,
+            &None,
         );
         assert_eq!(result, Err(Ok(ContractError::InvalidMetadataUri)));
 
@@ -1488,6 +1569,8 @@ mod tests {
             &MIN_TARGET,
             &2_000,
             &token_client.address,
+            &None,
+            &None,
             &None,
         );
         assert_eq!(result, Err(Ok(ContractError::MetadataUriTooLong)));
@@ -1585,6 +1668,8 @@ mod tests {
             &2_000,
             &token_client.address,
             &Some(cap),
+            &None,
+            &None,
         );
 
         // First donation within cap
@@ -1612,6 +1697,8 @@ mod tests {
             &10_000_000,
             &10_000,
             &token_client.address,
+            &None,
+            &None,
             &None,
         );
 
@@ -1681,6 +1768,8 @@ mod tests {
             &10_000,
             &token_client.address,
             &None,
+            &None,
+            &None,
         );
 
         client.donate(&donor, &campaign_id, &1_000_000, &false);
@@ -1709,5 +1798,147 @@ mod tests {
         let top = client.get_top_donors(&campaign_id);
         assert_eq!(top.len(), 1);
         assert_eq!(top.get(0).unwrap().0, donor);
+    }
+
+    // -----------------------------------------------------------------------
+    // Campaign Updates
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_add_and_get_updates() {
+        let (env, client, creator, beneficiary, _donor, _admin, token_client, _) = setup();
+        set_timestamp(&env, 5_000);
+
+        let bens = single_ben(&env, &beneficiary);
+        let campaign_id = client.create_campaign(
+            &creator,
+            &bens,
+            &String::from_str(&env, "Test Updates"),
+            &String::from_str(&env, "https://example.com/meta"),
+            &10_000_000,
+            &10_000,
+            &token_client.address,
+            &None,
+            &None,
+            &None,
+        );
+
+        // Empty updates initially
+        let updates = client.get_updates(&campaign_id);
+        assert_eq!(updates.len(), 0);
+
+        // Add first update
+        let content1 = String::from_str(&env, "First update");
+        client.add_update(&campaign_id, &content1);
+
+        set_timestamp(&env, 6_000);
+
+        // Add second update
+        let content2 = String::from_str(&env, "Second update");
+        client.add_update(&campaign_id, &content2);
+
+        // Verify ordering and content
+        let updates = client.get_updates(&campaign_id);
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates.get(0).unwrap().content, content1);
+        assert_eq!(updates.get(0).unwrap().timestamp, 5_000);
+        assert_eq!(updates.get(1).unwrap().content, content2);
+        assert_eq!(updates.get(1).unwrap().timestamp, 6_000);
+    }
+
+    #[test]
+    fn test_add_update_campaign_missing() {
+        let (_env, client, _creator, _beneficiary, _donor, _admin, _token_client, _) = setup();
+        let content = String::from_str(&client.env, "Update");
+        let result = client.try_add_update(&999, &content);
+        assert_eq!(result, Err(Ok(ContractError::CampaignNotFound)));
+    }
+
+    #[test]
+    fn test_add_update_empty_content() {
+        let (env, client, creator, beneficiary, _donor, _admin, token_client, _) = setup();
+        let bens = single_ben(&env, &beneficiary);
+        let campaign_id = client.create_campaign(
+            &creator,
+            &bens,
+            &String::from_str(&env, "Test"),
+            &String::from_str(&env, "https://example.com/meta"),
+            &10_000_000,
+            &10_000,
+            &token_client.address,
+            &None,
+            &None,
+            &None,
+        );
+
+        let content = String::from_str(&env, "");
+        let result = client.try_add_update(&campaign_id, &content);
+        assert_eq!(result, Err(Ok(ContractError::InvalidUpdateContent)));
+    }
+
+    #[test]
+    fn test_add_update_max_limit() {
+        let (env, client, creator, beneficiary, _donor, _admin, token_client, _) = setup();
+        let bens = single_ben(&env, &beneficiary);
+        let campaign_id = client.create_campaign(
+            &creator,
+            &bens,
+            &String::from_str(&env, "Test"),
+            &String::from_str(&env, "https://example.com/meta"),
+            &10_000_000,
+            &10_000,
+            &token_client.address,
+            &None,
+            &None,
+            &None,
+        );
+
+        let content = String::from_str(&env, "Update");
+
+        // Add 10 updates
+        for _ in 0..10 {
+            client.add_update(&campaign_id, &content);
+        }
+
+        // 11th update should fail
+        let result = client.try_add_update(&campaign_id, &content);
+        assert_eq!(result, Err(Ok(ContractError::TooManyUpdates)));
+    }
+
+    #[test]
+    #[should_panic(expected = "HostError: Error(Auth, InvalidAction)")]
+    fn test_add_update_unauthorized() {
+        let env = Env::default();
+        // Do not mock auths, so require_auth will fail
+        let creator = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let contract_id = env.register_contract(None, StellarGiveContract);
+        let client = StellarGiveContractClient::new(&env, &contract_id);
+
+        // We can't even initialize or create campaign without auth,
+        // so this is tricky. We'll use mock_auths specifically for the test.
+        env.mock_all_auths();
+
+        let bens = single_ben(&env, &creator); // using creator as beneficiary for simplicity
+        let campaign_id = client.create_campaign(
+            &creator,
+            &bens,
+            &String::from_str(&env, "Test"),
+            &String::from_str(&env, "https://example.com/meta"),
+            &10_000_000,
+            &10_000,
+            &token_id.address(),
+            &None,
+            &None,
+            &None,
+        );
+
+        // Remove mock_all_auths behavior by setting an empty auth list for the next call
+        env.mock_auths(&[]);
+
+        let content = String::from_str(&env, "Update");
+        // This will panic with Auth InvalidAction
+        client.add_update(&campaign_id, &content);
     }
 }

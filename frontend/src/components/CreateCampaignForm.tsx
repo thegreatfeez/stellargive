@@ -23,6 +23,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { useState } from "react";
 import { Loader2, PlusCircle } from "lucide-react";
@@ -54,12 +55,20 @@ const formSchema = z.object({
     .string()
     .optional()
     .refine((val) => !val || val.trim() === "" || val.startsWith("https://"), "Twitter URL must start with https://"),
+  metadataUri: z
+    .string()
+    .optional()
+    .refine((val) => !val || val.startsWith("ipfs://") || val.startsWith("https://"), "Metadata URI must start with ipfs:// or https://"),
 });
 
 const NATIVE_XLM = "CDLZS3ZCDY7SF3SIVR6Y7I6SN636O27T7G5MKSUIU22ZS76E55WJIPZ4";
 
 export function CreateCampaignForm() {
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedFileName, setSelectedFileName] = useState("");
+  const [uploadError, setUploadError] = useState("");
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const createCampaign = useCreateCampaign();
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -72,21 +81,24 @@ export function CreateCampaignForm() {
       acceptedToken: NATIVE_XLM,
       website: "",
       twitter: "",
+      metadataUri: "",
     },
   });
 
   const watchAcceptedToken = form.watch("acceptedToken");
+  const metadataUri = form.watch("metadataUri");
   const selectedTokenMeta = PREDEFINED_TOKENS.find(t => t.address === watchAcceptedToken);
   const tokenSymbol = selectedTokenMeta ? selectedTokenMeta.symbol : "Tokens";
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
-    if (createCampaign.isPending) return; // Prevent duplicate submissions
+    if (createCampaign.isPending || isUploadingImage) return; // Prevent duplicate submissions
 
     try {
       const deadline = Math.floor(Date.now() / 1000) + parseInt(values.deadlineDays) * 24 * 60 * 60;
       await createCampaign.mutateAsync({
         title: values.title,
         beneficiary: values.beneficiary,
+        metadataUri: values.metadataUri || undefined,
         targetAmount: values.targetAmount,
         deadline,
         acceptedToken: values.acceptedToken,
@@ -95,6 +107,9 @@ export function CreateCampaignForm() {
       });
       setIsOpen(false);
       form.reset();
+      setSelectedFileName("");
+      setUploadError("");
+      setUploadProgress(0);
     } catch (e: any) {
       // Errors are already handled/displayed by the sonner toast inside the useCreateCampaign hook mutation wrapper,
       // but we catch it here to prevent uncaught promise rejections.
@@ -102,9 +117,82 @@ export function CreateCampaignForm() {
     }
   }
 
+  async function uploadImage(file: File) {
+    setUploadError("");
+    setIsUploadingImage(true);
+    setUploadProgress(0);
+
+    const data = new FormData();
+    data.append("file", file);
+
+    const response = await new Promise<{ metadata_uri: string }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/ipfs-upload");
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          setUploadProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new Error("Upload failed. Please try again."));
+          return;
+        }
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch {
+          reject(new Error("Unexpected upload response."));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error("Network error while uploading image."));
+      xhr.send(data);
+    });
+
+    form.setValue("metadataUri", response.metadata_uri, { shouldValidate: true, shouldDirty: true });
+    setUploadProgress(100);
+    setIsUploadingImage(false);
+  }
+
+  async function onImageSelected(file: File | null) {
+    setUploadError("");
+    if (!file) {
+      setSelectedFileName("");
+      form.setValue("metadataUri", "");
+      return;
+    }
+    const isImage = file.type === "image/png" || file.type === "image/jpeg" || file.type === "image/jpg";
+    if (!isImage) {
+      setUploadError("Only PNG or JPG images are allowed.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setUploadError("Image must be 5MB or less.");
+      return;
+    }
+    setSelectedFileName(file.name);
+    try {
+      await uploadImage(file);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to upload image.";
+      setUploadError(message);
+      form.setValue("metadataUri", "", { shouldValidate: true, shouldDirty: true });
+      setIsUploadingImage(false);
+      setUploadProgress(0);
+    }
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => {
       if (!createCampaign.isPending) {
+        if (!open) {
+          setSelectedFileName("");
+          setUploadError("");
+          setUploadProgress(0);
+          setIsUploadingImage(false);
+        }
         setIsOpen(open);
       }
     }}>
@@ -198,6 +286,40 @@ export function CreateCampaignForm() {
             </div>
             <FormField
               control={form.control}
+              name="metadataUri"
+              render={() => (
+                <FormItem>
+                  <FormLabel>Campaign Cover Image (Optional)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="file"
+                      accept="image/png,image/jpeg"
+                      disabled={createCampaign.isPending || isUploadingImage}
+                      onChange={(event) => void onImageSelected(event.target.files?.[0] ?? null)}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Upload PNG/JPG image up to 5MB. This will be stored on IPFS.
+                  </FormDescription>
+                  {isUploadingImage && (
+                    <div className="space-y-1">
+                      <Progress value={uploadProgress} />
+                      <p className="text-xs text-muted-foreground">Uploading... {uploadProgress}%</p>
+                    </div>
+                  )}
+                  {selectedFileName && !uploadError && (
+                    <p className="text-xs text-muted-foreground">Selected: {selectedFileName}</p>
+                  )}
+                  {!!metadataUri && !uploadError && (
+                    <p className="text-xs text-muted-foreground break-all">CID: {metadataUri}</p>
+                  )}
+                  {!!uploadError && <p className="text-xs text-destructive">{uploadError}</p>}
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
               name="website"
               render={({ field }) => (
                 <FormItem>
@@ -222,11 +344,16 @@ export function CreateCampaignForm() {
                 </FormItem>
               )}
             />
-            <Button type="submit" className="w-full" disabled={createCampaign.isPending}>
+            <Button type="submit" className="w-full" disabled={createCampaign.isPending || isUploadingImage}>
               {createCampaign.isPending ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Creating Campaign...
+                </>
+              ) : isUploadingImage ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Uploading Image...
                 </>
               ) : (
                 "Launch Campaign"
